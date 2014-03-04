@@ -5,12 +5,14 @@ from collections import deque
 from urllib import urlencode
 
 
-class Cleverbot:
+class Cleverbot(object):
     """
-    This class abstracts the cleverbot api
+    This class abstracts the cleverbot api.  It also
+    allows you to instantiate it with a preserved
+    conversation (data attribute).
     """
 
-    def __init__(self):
+    def __init__(self, data=None):
         self.host = "www.cleverbot.com"
         self.protocol = "http://"
         self.resource = "/webservicemin"
@@ -30,17 +32,17 @@ class Cleverbot:
         }
 
         # initialize request payload
-        self.data = {
-            'start': 'y',
-            'icognoid': 'wsf',
-            'fno': 0,
-            'sub': 'Say',
-            'islearning': '1',
-            'cleanslate': 'false',
-        }
-
-        # conversation log
-        self.conversation = deque(maxlen=7)
+        if data:
+            self.data = data
+        else:
+            self.data = {
+                'start': 'y',
+                'icognoid': 'wsf',
+                'fno': 0,
+                'sub': 'Say',
+                'islearning': '1',
+                'cleanslate': 'false',
+            }
 
     def ask(self,q):
         """Asks Cleverbot a question.
@@ -60,17 +62,7 @@ class Cleverbot:
         # Connect to Cleverbot's API and remember the response
         resp = self._send()
 
-        # Add the current question to the conversation log
-        self.conversation.append(q)
-
         parsed = self._parse(resp)
-
-        # Set data as appropriate
-        # if self.data['sessionid']:
-        #     self.data['sessionid'] = parsed['conversation_id']
-
-        # Add Cleverbot's reply to the conversation log
-        #self.conversation.append(parsed['answer'])
 
         return parsed
 
@@ -83,15 +75,6 @@ class Cleverbot:
         to URLencode the data twice: once to generate the token, and
         twice to add the token to the data we're sending to Cleverbot.
         """
-
-        # Set data as appropriate
-        if self.conversation:
-            linecount = 1
-            for line in reversed(self.conversation):
-                linecount += 1
-                self.data['vText'+str(linecount)] = line
-                if linecount == 8:
-                    break
 
         # Generate the token
         enc_data = urlencode(self.data)
