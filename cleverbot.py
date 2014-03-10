@@ -1,142 +1,107 @@
+from __future__ import print_function, unicode_literals
+import sys
+if sys.version_info.major == 3:
+    from urllib.parse import urlencode
+else:
+    from urllib import urlencode
 from hashlib import md5
 import requests
-import logging
-from collections import deque
-from urllib import urlencode
+
+
+__all__ = ['Cleverbot', 'CleverbotAPIRejection']
 
 
 class Cleverbot(object):
-    """
-    This class abstracts the cleverbot api.  It also
-    allows you to instantiate it with a preserved
-    conversation (data attribute).
-    """
+    HOST = "www.cleverbot.com"
+    SCHEME = "http"
+    PATH = "/webservicemin"
+    RESOURCE = "{0}://{1}{2}".format(SCHEME, HOST, PATH)
 
-    def __init__(self, data=None):
-        self.host = "www.cleverbot.com"
-        self.protocol = "http://"
-        self.resource = "/webservicemin"
-        self.api_url = self.protocol + self.host + self.resource
-        self.log = logging.getLogger()
+    REQUEST_HEADERS = {
+        'User-Agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.0)',
+        'Accept': 'text/html,application/xhtml+xml'
+        ',application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+        'Accept-Language': 'en-us,en;q=0.8,en-us;q=0.5,en;q=0.3',
+        'Cache-Control': 'no-cache',
+        'Host': HOST,
+        'Referer': "{0}://{1}/".format(SCHEME, HOST),
+        'Pragma': 'no-cache',
+    }
 
-        # request headers
-        self.headers = {
-            'User-Agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.0)',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
-            'Accept-Language': 'en-us,en;q=0.8,en-us;q=0.5,en;q=0.3',
-            'Cache-Control': 'no-cache',
-            'Host': self.host,
-            'Referer': self.protocol + self.host + '/',
-            'Pragma': 'no-cache',
-        }
+    QUERY_DATA = {
+        'start': 'y',
+        'icognoid': 'wsf',
+        'fno': 0,
+        'sub': 'Say',
+        'islearning': '1',
+        'cleanslate': 'false',
+    }
 
-        # initialize request payload
+    def __init__(self, data=QUERY_DATA):
+        self.data = {}
+        self.data.update(self.QUERY_DATA)
         if data:
-            self.data = data
-        else:
-            self.data = {
-                'start': 'y',
-                'icognoid': 'wsf',
-                'fno': 0,
-                'sub': 'Say',
-                'islearning': '1',
-                'cleanslate': 'false',
-            }
+            self.data.update(data)
 
-    def ask(self,q):
-        """Asks Cleverbot a question.
-        
-        Maintains message history.
+    def ask(self, question):
+        self._send(question)
+        return self.data['ttsText'].decode('utf-8', errors="ignore")
 
-        Args:
-            q (str): The question to ask
-        Returns:
-            Cleverbot's answer
+    def _generate_token(self):
         """
-        self.log.debug("Cleverbot query: '%s'" % q)
-
-        # Set the current question
-        self.data['stimulus'] = q
-
-        # Connect to Cleverbot's API and remember the response
-        resp = self._send()
-
-        parsed = self._parse(resp)
-
-        return parsed
-
-    def _send(self):
-        """POST the user's question and all required information to the 
-        Cleverbot API
-
         Cleverbot tries to prevent unauthorized access to its API by
         obfuscating how it generates the 'icognocheck' token, so we have
         to URLencode the data twice: once to generate the token, and
         twice to add the token to the data we're sending to Cleverbot.
         """
-
-        # Generate the token
         enc_data = urlencode(self.data)
-        digest_txt = enc_data[9:35]  # (!) this appears to be where the old api broke
-        token = md5(digest_txt).hexdigest()
-        self.data['icognocheck'] = token
+        # (!) this appears to be where the old api broke
+        digest_txt = enc_data[9:35]
+        return md5(digest_txt.encode('utf-8')).hexdigest()
 
-        # Add the token to the data
-        r = requests.post(self.api_url, data=self.data, headers=self.headers)
+    def _send(self, question):
+        self.data['stimulus'] = question
+        self.data['icognocheck'] = self._generate_token()
 
-        # POST the data to Cleverbot's API
-        self.log.debug('Response content: ' + r.content)
+        r = requests.post(
+            self.RESOURCE,
+            data=self.data,
+            headers=self.REQUEST_HEADERS)
 
-        if 'DENIED' in r.content or r.status_code != 200:
-            raise Exception('The Cleverbot API has rejected the query.')
+        if b'DENIED' in r.content or r.status_code == 403:
+            raise CleverbotAPIRejection(r.status_code)
+        elif not r.ok:
+            r.raise_for_status()
+        else:
+            self._update_conversation_history(r.content)
 
-        # Return Cleverbot's response
-        return r.content
+    def _update_conversation_history(self, response):
+        field_names = (
+            None, 'sessionid', 'logurl', 'vText8',
+            'vText7', 'vText6', 'vText5', 'vText4',
+            'vText3', 'vText2', 'prevref', None,
+            'emotionalhistory', 'ttsLocMP3', 'ttsLocTXT', 'ttsLocTXT3',
+            'ttsText', 'lineRef', 'lineURL', 'linePOST',
+            'lineChoices', 'lineChoicesAbbrev', 'typingData', 'divert')
+        for k, v in zip(field_names, response.split(b'\r')):
+            if k:
+                self.data[k] = v
 
-    def _parse(self, response):
-        """
-        Parses Cleverbot's response, returns the text of the reply
-        """
 
-        parsed = response.split('\r')
+class CleverbotAPIRejection(Exception):
+    pass
 
-        #self.data['??'] = parsed[0]
-        self.data['sessionid'] = parsed[1]
-        self.data['logurl'] = parsed[2]
-        self.data['vText8'] = parsed[3]
-        self.data['vText7'] = parsed[4]
-        self.data['vText6'] = parsed[5]
-        self.data['vText5'] = parsed[6]
-        self.data['vText4'] = parsed[7]
-        self.data['vText3'] = parsed[8]
-        self.data['vText2'] = parsed[9]
-        self.data['prevref'] = parsed[10]
-        #self.data['??'] = parsed[11]
-        self.data['emotionalhistory'] = parsed[12]
-        self.data['ttsLocMP3'] = parsed[13]
-        self.data['ttsLocTXT'] = parsed[14]
-        self.data['ttsLocTXT3'] = parsed[15]
-        self.data['ttsText'] = parsed[16]
-        self.data['lineRef'] = parsed[17]
-        self.data['lineURL'] = parsed[18]
-        self.data['linePOST'] = parsed[19]
-        self.data['lineChoices'] = parsed[20]
-        self.data['lineChoicesAbbrev'] = parsed[21]
-        self.data['typingData'] = parsed[22]
-        self.data['divert'] = parsed[23]
-
-        return self.data['ttsText']
 
 if __name__ == "__main__":
     cb1 = Cleverbot()
     cb2 = Cleverbot()
 
     resp1 = cb1.ask("Hello.")
-    print "Bob:", "Hello"
+    print("Bob:", "Hello")
 
     while True:
-        print "Alice:", resp1
+        print("Alice:" + resp1)
         resp2 = cb2.ask(resp1)
-        print "Bob:", resp2
+        print("Bob:" + resp2)
         resp1 = cb1.ask(resp2)
