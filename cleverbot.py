@@ -1,12 +1,10 @@
 from __future__ import print_function, unicode_literals
 import sys
-if sys.version_info.major == 3 and sys.version_info.minor >= 3:
-    from urllib.parse import urlunparse, urlencode
+if sys.version_info.major == 3:
+    from urllib.parse import urlencode
 else:
-    from urlparse import urlunparse
     from urllib import urlencode
 from hashlib import md5
-import logging
 import requests
 
 
@@ -14,31 +12,24 @@ __all__ = ['Cleverbot', 'CleverbotAPIRejection']
 
 
 class Cleverbot(object):
+    HOST = "www.cleverbot.com"
+    SCHEME = "http"
+    PATH = "/webservicemin"
+    RESOURCE = "{0}://{1}{2}".format(SCHEME, HOST, PATH)
 
-    """
-    This class abstracts the cleverbot api.  It also
-    allows you to instantiate it with a preserved
-    conversation (data attribute).
-    """
-
-    _scheme = "http"
-    _netloc = "www.cleverbot.com"
-    _path = "webservicemin"
-    resource = urlunparse((_scheme, _netloc, _path, "", "", ""))
-
-    _request_headers = {
+    REQUEST_HEADERS = {
         'User-Agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.0)',
         'Accept': 'text/html,application/xhtml+xml'
         ',application/xml;q=0.9,*/*;q=0.8',
         'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
         'Accept-Language': 'en-us,en;q=0.8,en-us;q=0.5,en;q=0.3',
         'Cache-Control': 'no-cache',
-        'Host': _netloc,
-        'Referer': "{0}://{1}/".format(_scheme, _netloc),
+        'Host': HOST,
+        'Referer': "{0}://{1}/".format(SCHEME, HOST),
         'Pragma': 'no-cache',
     }
 
-    _sample_default_data = {
+    QUERY_DATA = {
         'start': 'y',
         'icognoid': 'wsf',
         'fno': 0,
@@ -47,22 +38,17 @@ class Cleverbot(object):
         'cleanslate': 'false',
     }
 
-    def __init__(self, data=_sample_default_data):
-        self._log = logging.getLogger()
-        self.data = data
+    def __init__(self, data=QUERY_DATA):
+        self.data = {}
+        self.data.update(self.QUERY_DATA)
+        if data:
+            self.data.update(data)
 
     def ask(self, question):
-        "Ask Cleverbot a question."
+        self._send(question)
+        return self.data['ttsText'].decode('utf-8', errors="ignore")
 
-        self._log.debug("Cleverbot query: '%s'" % question)
-
-        self.data['stimulus'] = question
-        response = self._send()
-
-        self._update_conversation_history(response)
-        return self.data['ttsText'].decode('utf-8')
-
-    def _update_token(self):
+    def _generate_token(self):
         """
         Cleverbot tries to prevent unauthorized access to its API by
         obfuscating how it generates the 'icognocheck' token, so we have
@@ -72,25 +58,25 @@ class Cleverbot(object):
         enc_data = urlencode(self.data)
         # (!) this appears to be where the old api broke
         digest_txt = enc_data[9:35]
-        token = md5(digest_txt.encode('utf-8')).hexdigest()
-        self.data['icognocheck'] = token
+        return md5(digest_txt.encode('utf-8')).hexdigest()
 
-    def _send(self):
-        """Handles POST of current self.data to API."""
-        self._update_token()
+    def _send(self, question):
+        self.data['stimulus'] = question
+        self.data['icognocheck'] = self._generate_token()
+
         r = requests.post(
-            self.resource,
+            self.RESOURCE,
             data=self.data,
-            headers=self._request_headers)
+            headers=self.REQUEST_HEADERS)
 
-        self._log.debug('Response content: ' + r.content.decode('utf-8'))
-        if b'DENIED' in r.content or r.status_code != 200:
+        if b'DENIED' in r.content or r.status_code == 403:
             raise CleverbotAPIRejection(r.status_code)
+        elif not r.ok:
+            r.raise_for_status()
         else:
-            return r.content
+            self._update_conversation_history(r.content)
 
     def _update_conversation_history(self, response):
-        """Parses an API response and updates self.data."""
         field_names = (
             None, 'sessionid', 'logurl', 'vText8',
             'vText7', 'vText6', 'vText5', 'vText4',
@@ -108,7 +94,6 @@ class CleverbotAPIRejection(Exception):
 
 
 if __name__ == "__main__":
-    logging.basicConfig()
     cb1 = Cleverbot()
     cb2 = Cleverbot()
 
