@@ -22,3 +22,5 @@ Taken from cleverbot/cleverbot.py:150-161
         print "Bob:", resp2
         resp1 = cb1.ask(resp2)
 ```
+
+If using SL4A, use the cleverbot.py in `sl4a` folder.
